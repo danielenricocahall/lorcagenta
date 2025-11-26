@@ -77,7 +77,7 @@ class CardStoreRDBMS(CardStore):
             clauses.append(lower(self.card_table.name) == name.lower())
         if clauses:
             query = query.where(*clauses)
-        return self._get_cards_from_db(str(query))
+        return self._get_cards_from_db(query.build())
 
     @abstractmethod
     def _get_cards_from_db(self, query: str) -> list[dict]:
