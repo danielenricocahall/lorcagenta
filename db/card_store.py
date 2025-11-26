@@ -55,7 +55,7 @@ class CardStoreSQLite(CardStoreRDBMS):
         return "sqlite:///:memory:"
 
 
-class v(CardStoreRDBMS):
+class CardStorePostgres(CardStoreRDBMS):
     _type: str = "postgres"
 
     @property
