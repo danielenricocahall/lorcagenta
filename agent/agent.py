@@ -1,12 +1,3 @@
-# agent.py
-"""
-New-style LangChain agent for asking natural language questions
-about Lorcana cards stored in CardStore.
-
-- Uses ChatOpenAI + bind_tools (no langchain.agents / AgentExecutor).
-- Wraps CardStore.get_cards(...) in a tool the model can call.
-"""
-
 from typing import Optional, Dict, Any
 import json
 
