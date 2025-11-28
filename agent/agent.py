@@ -1,4 +1,6 @@
-from typing import Optional, Dict, Any
+# lorcana_agent.py (for example)
+
+from typing import Optional, Dict, Any, List
 import json
 
 from langchain_core.tools import tool
@@ -21,7 +23,6 @@ def search_lorcana_cards(
         color: Ink color (e.g. "ruby", "amber", "steel").
         cost: Ink cost (integer).
         name: Full or partial card name (e.g. "Nick Wilde").
-        text: Substring to match in rules/ability text if available.
 
     Returns:
         A JSON string representing the list of matching card dicts.
@@ -30,7 +31,7 @@ def search_lorcana_cards(
 
     if color:
         filters["color"] = color.lower()
-    if cost:
+    if cost is not None:
         filters["cost"] = cost
     if name:
         filters["name"] = name
@@ -47,6 +48,7 @@ class LorcanaAgent:
         self.llm_with_tools = self.llm.bind_tools(self.tools)
 
     def invoke(self, question: str) -> str:
+        """Original 'chatty' mode: returns a natural language answer."""
         messages = [
             SystemMessage(
                 content=(
@@ -86,10 +88,42 @@ class LorcanaAgent:
         final_msg = self.llm.invoke(messages)
         return final_msg.content
 
+    def search_cards(self, question: str) -> List[Dict[str, Any]]:
+        """
+        Run the LLM with tools and return the *raw cards* from any
+        `search_lorcana_cards` tool calls, as a list of dicts.
 
-if __name__ == "__main__":
-    agent = LorcanaAgent()
+        This is what the Dash app will use.
+        """
+        messages = [
+            SystemMessage(
+                content=(
+                    "You are an expert Disney Lorcana card assistant. "
+                    "When the user asks about specific cards or card searches, "
+                    "use the `search_lorcana_cards` tool to look them up in the local database. "
+                    "Respond by calling the tool with appropriate arguments."
+                )
+            ),
+            HumanMessage(content=question),
+        ]
 
-    print(agent.invoke("Find me all Ruby cards that cost more than 7 ink."))
-    print(agent.invoke("Show me Nick Wilde cards that are sapphire and cost 3."))
-    print(agent.invoke("What Lorcana cards match Belle?"))
+        ai_msg = self.llm_with_tools.invoke(messages)
+        tool_calls = getattr(ai_msg, "tool_calls", []) or []
+
+        all_cards: List[Dict[str, Any]] = []
+
+        for tool_call in tool_calls:
+            tool_name = tool_call["name"]
+            tool_args = tool_call["args"]
+
+            if tool_name == "search_lorcana_cards":
+                tool_output = search_lorcana_cards.invoke(tool_args)
+                try:
+                    cards = json.loads(tool_output)
+                    if isinstance(cards, list):
+                        all_cards.extend(cards)
+                except json.JSONDecodeError:
+                    # If something weird happens, just ignore this tool call.
+                    continue
+
+        return all_cards

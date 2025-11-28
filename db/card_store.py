@@ -47,7 +47,7 @@ class CardStore(ABC):
 
     @property
     def id_to_color_mapping(self):
-        return {v: k for k, v in self.card_number_to_color_mapping.items()}
+        return {v: k for k, v in self.color_to_id_mapping.items()}
 
 
 class CardStoreRDBMS(CardStore):
@@ -77,7 +77,11 @@ class CardStoreRDBMS(CardStore):
             clauses.append(lower(self.card_table.name) == name.lower())
         if clauses:
             query = query.where(*clauses)
-        return self._get_cards_from_db(query.build())
+        resuts = self._get_cards_from_db(query.build())
+        results = [
+            {**row, "color": self.id_to_color_mapping[row["color"]]} for row in resuts
+        ]
+        return results
 
     @abstractmethod
     def _get_cards_from_db(self, query: str) -> list[dict]:
