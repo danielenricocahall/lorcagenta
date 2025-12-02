@@ -88,42 +88,81 @@ class LorcanaAgent:
         final_msg = self.llm.invoke(messages)
         return final_msg.content
 
-    def search_cards(self, question: str) -> List[Dict[str, Any]]:
+    def search_cards(
+        self, question: str, max_iterations: int = 3
+    ) -> List[Dict[str, Any]]:
         """
-        Run the LLM with tools and return the *raw cards* from any
+        Run the LLM with tools in multiple rounds and return the *raw cards* from any
         `search_lorcana_cards` tool calls, as a list of dicts.
 
-        This is what the Dash app will use.
+        The model can:
+        - Call `search_lorcana_cards` multiple times in a single response.
+        - Ask for more tool calls in later iterations after seeing previous results.
+
+        We stop when the model stops calling tools or we hit `max_iterations`.
         """
         messages = [
             SystemMessage(
                 content=(
                     "You are an expert Disney Lorcana card assistant. "
-                    "When the user asks about specific cards or card searches, "
-                    "use the `search_lorcana_cards` tool to look them up in the local database. "
-                    "Respond by calling the tool with appropriate arguments."
+                    "The user will ask for cards using natural language. "
+                    "Your ONLY job is to decide which `search_lorcana_cards` tool calls to make.\n\n"
+                    "Rules:\n"
+                    "1. Always respond by calling `search_lorcana_cards` with appropriate arguments.\n"
+                    "   - Use `color`, `cost`, and/or `name` when helpful.\n"
+                    "2. You MAY call `search_lorcana_cards` multiple times in a single response, "
+                    "   for example when the user asks for cards related to a Disney movie: "
+                    "   call the tool once per relevant character (Belle, Beast, Lumiere, Cogsworth, etc.).\n"
+                    "3. After you have no more useful searches to perform, respond with a normal assistant "
+                    "   message with *no* tool calls. That means you're done.\n"
+                    "4. Do NOT explain results or talk to the user in this mode; just decide what to search.\n"
                 )
             ),
             HumanMessage(content=question),
         ]
 
-        ai_msg = self.llm_with_tools.invoke(messages)
-        tool_calls = getattr(ai_msg, "tool_calls", []) or []
-
         all_cards: List[Dict[str, Any]] = []
+        seen_ids = (
+            set()
+        )  # avoid duplicates if your card dicts have a stable 'id' or similar
 
-        for tool_call in tool_calls:
-            tool_name = tool_call["name"]
-            tool_args = tool_call["args"]
+        for _ in range(max_iterations):
+            ai_msg = self.llm_with_tools.invoke(messages)
+            messages.append(ai_msg)
 
-            if tool_name == "search_lorcana_cards":
-                tool_output = search_lorcana_cards.invoke(tool_args)
-                try:
-                    cards = json.loads(tool_output)
-                    if isinstance(cards, list):
-                        all_cards.extend(cards)
-                except json.JSONDecodeError:
-                    # If something weird happens, just ignore this tool call.
-                    continue
+            tool_calls = getattr(ai_msg, "tool_calls", []) or []
+            if not tool_calls:
+                # Model didn't call any tools this round -> we're done
+                break
+
+            for tool_call in tool_calls:
+                tool_name = tool_call["name"]
+                tool_args = tool_call["args"]
+                tool_id = tool_call["id"]
+
+                print(f"Invoking tool {tool_name} with args {tool_args}")
+
+                if tool_name == "search_lorcana_cards":
+                    tool_output = search_lorcana_cards.invoke(tool_args)
+                else:
+                    tool_output = json.dumps(
+                        {"error": f"Unknown tool: {tool_name}"}, ensure_ascii=False
+                    )
+
+                # Send tool result back to the model so it can decide if more searches are needed
+                messages.append(
+                    ToolMessage(
+                        content=tool_output,
+                        tool_call_id=tool_id,
+                    )
+                )
+
+                cards = json.loads(tool_output)
+
+                for card in cards:
+                    card_id = card.get("id")
+                    if card_id not in seen_ids:
+                        seen_ids.add(card_id)
+                        all_cards.append(card)
 
         return all_cards
